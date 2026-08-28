@@ -81,7 +81,18 @@ export default function App() {
     SheetService.exportToCSV(filteredRecords);
   };
 
-  const handleRefreshFromSheet = () => {
+  const handleClearData = () => {
+    const cleared = SheetService.clearAllRecords();
+    setRecords(cleared);
+    setLastSyncTime(new Date());
+  };
+
+  const handleRefreshFromSheet = (newRecords?: FunnelDailyRecord[]) => {
+    if (newRecords && Array.isArray(newRecords)) {
+      setRecords(newRecords);
+    } else {
+      setRecords(SheetService.loadRecords());
+    }
     setLastSyncTime(new Date());
   };
 
@@ -160,6 +171,8 @@ export default function App() {
         onClose={() => setIsSyncModalOpen(false)}
         onRefreshData={handleRefreshFromSheet}
         onResetDefaults={handleResetDefaults}
+        onClearData={handleClearData}
+        currentRecords={records}
       />
     </div>
   );

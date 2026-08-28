@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { X, Plus, Calculator, Check } from 'lucide-react';
+import { X, Plus, Check, Zap } from 'lucide-react';
 import { FunnelDailyRecord } from '../types';
-import { formatBRL, formatNumber, formatPercent, formatRatio } from '../utils/calculator';
+import { formatBRL, formatRatio } from '../utils/calculator';
+import { SheetService } from '../services/sheetService';
 
 interface NewEntryModalProps {
   isOpen: boolean;
@@ -20,6 +21,7 @@ export const NewEntryModal: React.FC<NewEntryModalProps> = ({
   const [date, setDate] = useState(today);
   const [channel, setChannel] = useState<'Meta (LP)' | 'Meta (Form)' | 'Google'>('Meta (LP)');
   const [month, setMonth] = useState('Abril');
+  const webhookUrl = SheetService.getSavedWebhookUrl();
 
   // Input states
   const [investimento, setInvestimento] = useState<number>(450);
@@ -46,7 +48,6 @@ export const NewEntryModal: React.FC<NewEntryModalProps> = ({
   const previewCpl = leads > 0 ? investimento / leads : 0;
   const previewRoas = investimento > 0 ? faturamento / investimento : 0;
   const previewCac = vendas > 0 ? investimento / vendas : 0;
-  const previewShowRate = reunioesProgramadas > 0 ? (reunioesRealizadas / reunioesProgramadas) * 100 : 0;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -75,7 +76,16 @@ export const NewEntryModal: React.FC<NewEntryModalProps> = ({
       vendas: Number(vendas) || 0,
       faturamento: Number(faturamento) || 0,
     };
+
     onSave(newRecord);
+
+    // If Google Apps Script Webhook is configured, write to sheet in background
+    if (webhookUrl) {
+      SheetService.sendToGoogleAppsScript(webhookUrl, newRecord).then((res) => {
+        console.log('Webhook write response:', res.message);
+      });
+    }
+
     onClose();
   };
 
@@ -105,6 +115,16 @@ export const NewEntryModal: React.FC<NewEntryModalProps> = ({
         {/* Modal Body / Form */}
         <form onSubmit={handleSubmit} className="p-5 space-y-5 flex-1">
           
+          {/* Webhook notification banner if active */}
+          {webhookUrl && (
+            <div className="p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30 text-emerald-400 text-xs flex items-center gap-2">
+              <Zap className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>
+                <strong>Sincronização Ativa:</strong> Este registro será salvo no cockpit e gravado automaticamente na sua planilha Google via Webhook!
+              </span>
+            </div>
+          )}
+
           {/* Channel, Date & Month Row */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
