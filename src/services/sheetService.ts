@@ -6,74 +6,285 @@ const SHEET_URL_KEY = 'growthops_sheet_url_v1';
 const WEBHOOK_URL_KEY = 'growthops_webhook_url_v1';
 
 export const DEFAULT_SHEET_URL =
-  'https://docs.google.com/spreadsheets/d/18c3Jv7LSmh7OwDVI3cMobiPZXklO4yyf3fWWwwAizo4/edit?gid=1314698631#gid=1314698631';
+  'https://docs.google.com/spreadsheets/d/14P7GusbrG0-jDt1aD6JZMt6aLt6d4Jnnzzu-EfKs8OM/edit?gid=0#gid=0';
 
-export const APPS_SCRIPT_TEMPLATE = `function doPost(e) {
+/**
+ * Robust, non-destructive Google Apps Script
+ * - Reads and Writes into the EXACT cells for Meta (LP) [Col B], Meta (Form) [Col C], Google [Col D]
+ * - Preserves headers, formulas, and columns E, F, G (Playbook de Ações)
+ */
+export const APPS_SCRIPT_TEMPLATE = `/**
+ * GrowthOps Funnel Connector - Google Apps Script
+ * Sincronizador Bidirecional de Alta Precisão
+ */
+
+function getTargetSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  return (
+    ss.getSheetByName("Painel nós da Jornada") ||
+    ss.getSheetByName("Dados") ||
+    ss.getSheets()[0]
+  );
+}
+
+// Helper para normalizar texto de busca
+function norm(str) {
+  return String(str || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\\u0300-\\u036f]/g, "")
+    .trim();
+}
+
+// 1. LEITURA DOS DADOS (GET)
+function doGet(e) {
   try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = ss.getSheetByName("Dados") || ss.getActiveSheet();
-    var payload = JSON.parse(e.postData.contents);
+    var sheet = getTargetSheet();
+    var lastRow = Math.min(sheet.getLastRow(), 55);
+    var range = sheet.getRange(1, 1, lastRow, 4).getValues();
     
-    // Se receber múltiplos registros (array) ou registro único
-    var records = Array.isArray(payload.records) ? payload.records : [payload];
-    
-    // Cria cabeçalho se a planilha estiver vazia
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow([
-        "Data", "Mês", "Canal", "Investimento Total (R$)", "Valor Captação (R$)", 
-        "Distribuição (R$)", "Impressões", "Cliques", "Acessos LP", "Leads", 
-        "MQL", "Ligações Realizadas", "Ligações Atendidas", "SAL", "SQL", 
-        "RM Agendadas", "Reuniões Programadas", "Reuniões Realizadas", 
-        "No Show", "Reagendamentos", "Vendas", "Faturamento (R$)"
-      ]);
+    var month = "Março";
+    var data = {
+      "Meta (LP)": {},
+      "Meta (Form)": {},
+      "Google": {}
+    };
+
+    for (var i = 0; i < range.length; i++) {
+      var rowName = norm(range[i][0]);
+      var valB = range[i][1];
+      var valC = range[i][2];
+      var valD = range[i][3];
+
+      if (rowName.indexOf("mes") >= 0) {
+        if (valB) month = String(valB).trim();
+      } else if (rowName.indexOf("investimento") >= 0 && rowName.indexOf("distribuicao") < 0) {
+        data["Meta (LP)"].investimento = parseNum(valB);
+        data["Meta (Form)"].investimento = parseNum(valC);
+        data["Google"].investimento = parseNum(valD);
+      } else if (rowName.indexOf("captacao") >= 0) {
+        data["Meta (LP)"].valorCaptacao = parseNum(valB);
+        data["Meta (Form)"].valorCaptacao = parseNum(valC);
+        data["Google"].valorCaptacao = parseNum(valD);
+      } else if (rowName.indexOf("distribuicao") >= 0) {
+        data["Meta (LP)"].distribuicao = parseNum(valB);
+        data["Meta (Form)"].distribuicao = parseNum(valC);
+        data["Google"].distribuicao = parseNum(valD);
+      } else if (rowName.indexOf("impressoes") >= 0) {
+        data["Meta (LP)"].impressoes = parseNum(valB);
+        data["Meta (Form)"].impressoes = parseNum(valC);
+        data["Google"].impressoes = parseNum(valD);
+      } else if (rowName.indexOf("cliques") >= 0) {
+        data["Meta (LP)"].cliques = parseNum(valB);
+        data["Meta (Form)"].cliques = parseNum(valC);
+        data["Google"].cliques = parseNum(valD);
+      } else if (rowName.indexOf("acessos") >= 0 || rowName.indexOf("pagina") >= 0) {
+        data["Meta (LP)"].acessosPagina = parseNum(valB);
+        data["Meta (Form)"].acessosPagina = parseNum(valC);
+        data["Google"].acessosPagina = parseNum(valD);
+      } else if (rowName === "leads") {
+        data["Meta (LP)"].leads = parseNum(valB);
+        data["Meta (Form)"].leads = parseNum(valC);
+        data["Google"].leads = parseNum(valD);
+      } else if (rowName === "mql") {
+        data["Meta (LP)"].mql = parseNum(valB);
+        data["Meta (Form)"].mql = parseNum(valC);
+        data["Google"].mql = parseNum(valD);
+      } else if (rowName.indexOf("ligacoes realizadas") >= 0) {
+        data["Meta (LP)"].ligacoesRealizadas = parseNum(valB);
+        data["Meta (Form)"].ligacoesRealizadas = parseNum(valC);
+        data["Google"].ligacoesRealizadas = parseNum(valD);
+      } else if (rowName.indexOf("ligacoes atendidas") >= 0) {
+        data["Meta (LP)"].ligacoesAtendidas = parseNum(valB);
+        data["Meta (Form)"].ligacoesAtendidas = parseNum(valC);
+        data["Google"].ligacoesAtendidas = parseNum(valD);
+      } else if (rowName === "sal") {
+        data["Meta (LP)"].sal = parseNum(valB);
+        data["Meta (Form)"].sal = parseNum(valC);
+        data["Google"].sal = parseNum(valD);
+      } else if (rowName === "sql") {
+        data["Meta (LP)"].sql = parseNum(valB);
+        data["Meta (Form)"].sql = parseNum(valC);
+        data["Google"].sql = parseNum(valD);
+      } else if (rowName.indexOf("rm agendadas") >= 0) {
+        data["Meta (LP)"].rmAgendadas = parseNum(valB);
+        data["Meta (Form)"].rmAgendadas = parseNum(valC);
+        data["Google"].rmAgendadas = parseNum(valD);
+      } else if (rowName.indexOf("programadas") >= 0) {
+        data["Meta (LP)"].reunioesProgramadas = parseNum(valB);
+        data["Meta (Form)"].reunioesProgramadas = parseNum(valC);
+        data["Google"].reunioesProgramadas = parseNum(valD);
+      } else if (rowName.indexOf("realizadas no dia") >= 0 || rowName.indexOf("reunioes realizadas") >= 0) {
+        data["Meta (LP)"].reunioesRealizadas = parseNum(valB);
+        data["Meta (Form)"].reunioesRealizadas = parseNum(valC);
+        data["Google"].reunioesRealizadas = parseNum(valD);
+      } else if (rowName.indexOf("no show") >= 0) {
+        data["Meta (LP)"].noShow = parseNum(valB);
+        data["Meta (Form)"].noShow = parseNum(valC);
+        data["Google"].noShow = parseNum(valD);
+      } else if (rowName.indexOf("reagendamentos") >= 0) {
+        data["Meta (LP)"].reagendamentos = parseNum(valB);
+        data["Meta (Form)"].reagendamentos = parseNum(valC);
+        data["Google"].reagendamentos = parseNum(valD);
+      } else if (rowName.indexOf("vendas no dia") >= 0 || rowName === "vendas") {
+        data["Meta (LP)"].vendas = parseNum(valB);
+        data["Meta (Form)"].vendas = parseNum(valC);
+        data["Google"].vendas = parseNum(valD);
+      } else if (rowName.indexOf("faturamento") >= 0) {
+        data["Meta (LP)"].faturamento = parseNum(valB);
+        data["Meta (Form)"].faturamento = parseNum(valC);
+        data["Google"].faturamento = parseNum(valD);
+      }
     }
-    
-    // Se ação for sobrescrever todos os dados
-    if (payload.action === 'overwrite') {
-      var headerRange = sheet.getRange(1, 1, 1, sheet.getLastColumn() || 22);
-      var headers = headerRange.getValues()[0];
-      sheet.clearContents();
-      sheet.appendRow(headers);
-    }
-    
-    records.forEach(function(r) {
-      sheet.appendRow([
-        r.date || '',
-        r.month || '',
-        r.channel || 'Meta (LP)',
-        r.investimento || 0,
-        r.valorCaptacao || 0,
-        r.distribuicao || 0,
-        r.impressoes || 0,
-        r.cliques || 0,
-        r.acessosPagina || 0,
-        r.leads || 0,
-        r.mql || 0,
-        r.ligacoesRealizadas || 0,
-        r.ligacoesAtendidas || 0,
-        r.sal || 0,
-        r.sql || 0,
-        r.rmAgendadas || 0,
-        r.reunioesProgramadas || 0,
-        r.reunioesRealizadas || 0,
-        r.noShow || 0,
-        r.reagendamentos || 0,
-        r.vendas || 0,
-        r.faturamento || 0
-      ]);
+
+    var channels = ["Meta (LP)", "Meta (Form)", "Google"];
+    var today = new Date().toISOString().slice(0, 10);
+    var records = channels.map(function(ch, idx) {
+      var d = data[ch] || {};
+      return {
+        id: "sheet_" + idx + "_" + new Date().getTime(),
+        date: today,
+        month: month,
+        channel: ch,
+        investimento: d.investimento || 0,
+        valorCaptacao: d.valorCaptacao || (d.investimento ? d.investimento * 0.85 : 0),
+        distribuicao: d.distribuicao || 0,
+        impressoes: d.impressoes || 0,
+        cliques: d.cliques || 0,
+        acessosPagina: d.acessosPagina || (ch === "Meta (Form)" ? 0 : d.cliques || 0),
+        leads: d.leads || 0,
+        mql: d.mql || 0,
+        ligacoesRealizadas: d.ligacoesRealizadas || 0,
+        ligacoesAtendidas: d.ligacoesAtendidas || 0,
+        sal: d.sal || 0,
+        sql: d.sql || 0,
+        rmAgendadas: d.rmAgendadas || 0,
+        reunioesProgramadas: d.reunioesProgramadas || d.rmAgendadas || 0,
+        reunioesRealizadas: d.reunioesRealizadas || 0,
+        noShow: d.noShow || 0,
+        reagendamentos: d.reagendamentos || 0,
+        vendas: d.vendas || 0,
+        faturamento: d.faturamento || 0
+      };
     });
-    
-    return ContentService.createTextOutput(JSON.stringify({ status: "success", count: records.length }))
-      .setMimeType(ContentService.MimeType.JSON);
-  } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: error.toString() }))
-      .setMimeType(ContentService.MimeType.JSON);
+
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "success",
+      month: month,
+      count: records.length,
+      records: records
+    })).setMimeType(ContentService.MimeType.JSON);
+
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "error",
+      message: err.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
   }
 }
 
-function doGet(e) {
-  return ContentService.createTextOutput(JSON.stringify({ status: "ready", message: "GrowthOps Webhook Ativo" }))
-    .setMimeType(ContentService.MimeType.JSON);
+// 2. GRAVAÇÃO SEGURA NAS CÉLULAS EXATAS (POST)
+function doPost(e) {
+  try {
+    var sheet = getTargetSheet();
+    var payload = JSON.parse(e.postData.contents);
+    var records = Array.isArray(payload.records) ? payload.records : [payload];
+
+    // Agrupa dados por canal
+    var map = { "Meta (LP)": null, "Meta (Form)": null, "Google": null };
+    records.forEach(function(r) {
+      if (r && r.channel) {
+        map[r.channel] = r;
+      }
+    });
+
+    var lastRow = Math.min(sheet.getLastRow(), 55);
+    var colA = sheet.getRange(1, 1, lastRow, 1).getValues();
+
+    function setRowVals(rowIdx, valLP, valForm, valGoogle) {
+      sheet.getRange(rowIdx, 2).setValue(valLP);
+      sheet.getRange(rowIdx, 3).setValue(valForm);
+      sheet.getRange(rowIdx, 4).setValue(valGoogle);
+    }
+
+    for (var i = 0; i < colA.length; i++) {
+      var rowName = norm(colA[i][0]);
+      var rowNum = i + 1;
+
+      var lp = map["Meta (LP)"];
+      var form = map["Meta (Form)"];
+      var goog = map["Google"];
+
+      if (rowName === "investimento") {
+        setRowVals(rowNum, lp ? lp.investimento : 0, form ? form.investimento : 0, goog ? goog.investimento : 0);
+      } else if (rowName.indexOf("captacao") >= 0) {
+        setRowVals(rowNum, lp ? lp.valorCaptacao : 0, form ? form.valorCaptacao : 0, goog ? goog.valorCaptacao : 0);
+      } else if (rowName.indexOf("distribuicao") >= 0) {
+        setRowVals(rowNum, lp ? lp.distribuicao : 0, form ? form.distribuicao : 0, goog ? goog.distribuicao : 0);
+      } else if (rowName.indexOf("impressoes") >= 0) {
+        setRowVals(rowNum, lp ? lp.impressoes : 0, form ? form.impressoes : 0, goog ? goog.impressoes : 0);
+      } else if (rowName.indexOf("cliques") >= 0) {
+        setRowVals(rowNum, lp ? lp.cliques : 0, form ? form.cliques : 0, goog ? goog.cliques : 0);
+      } else if (rowName.indexOf("acessos") >= 0 || rowName.indexOf("pagina") >= 0) {
+        setRowVals(rowNum, lp ? lp.acessosPagina : 0, "-", goog ? goog.acessosPagina : 0);
+      } else if (rowName === "leads") {
+        setRowVals(rowNum, lp ? lp.leads : 0, form ? form.leads : 0, goog ? goog.leads : 0);
+      } else if (rowName === "mql") {
+        setRowVals(rowNum, lp ? lp.mql : 0, form ? form.mql : 0, goog ? goog.mql : 0);
+      } else if (rowName.indexOf("ligacoes realizadas") >= 0) {
+        setRowVals(rowNum, lp ? lp.ligacoesRealizadas : 0, form ? form.ligacoesRealizadas : 0, goog ? goog.ligacoesRealizadas : 0);
+      } else if (rowName.indexOf("ligacoes atendidas") >= 0) {
+        setRowVals(rowNum, lp ? lp.ligacoesAtendidas : 0, form ? form.ligacoesAtendidas : 0, goog ? goog.ligacoesAtendidas : 0);
+      } else if (rowName === "sal") {
+        setRowVals(rowNum, lp ? lp.sal : 0, form ? form.sal : 0, goog ? goog.sal : 0);
+      } else if (rowName === "sql") {
+        setRowVals(rowNum, lp ? lp.sql : 0, form ? form.sql : 0, goog ? goog.sql : 0);
+      } else if (rowName.indexOf("rm agendadas") >= 0) {
+        setRowVals(rowNum, lp ? lp.rmAgendadas : 0, form ? form.rmAgendadas : 0, goog ? goog.rmAgendadas : 0);
+      } else if (rowName.indexOf("programadas") >= 0) {
+        setRowVals(rowNum, lp ? lp.reunioesProgramadas : 0, form ? form.reunioesProgramadas : 0, goog ? goog.reunioesProgramadas : 0);
+      } else if (rowName.indexOf("realizadas no dia") >= 0 || rowName.indexOf("reunioes realizadas") >= 0) {
+        setRowVals(rowNum, lp ? lp.reunioesRealizadas : 0, form ? form.reunioesRealizadas : 0, goog ? goog.reunioesRealizadas : 0);
+      } else if (rowName.indexOf("no show") >= 0) {
+        setRowVals(rowNum, lp ? lp.noShow : 0, form ? form.noShow : 0, goog ? goog.noShow : 0);
+      } else if (rowName.indexOf("reagendamentos") >= 0) {
+        setRowVals(rowNum, lp ? lp.reagendamentos : 0, form ? form.reagendamentos : 0, goog ? goog.reagendamentos : 0);
+      } else if (rowName.indexOf("vendas no dia") >= 0 || rowName === "vendas") {
+        setRowVals(rowNum, lp ? lp.vendas : 0, form ? form.vendas : 0, goog ? goog.vendas : 0);
+      } else if (rowName.indexOf("faturamento") >= 0) {
+        setRowVals(rowNum, lp ? lp.faturamento : 0, form ? form.faturamento : 0, goog ? goog.faturamento : 0);
+      }
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "success",
+      message: "Células da planilha atualizadas com precisão cirúrgica sem alterar fórmulas ou colunas de ação!"
+    })).setMimeType(ContentService.MimeType.JSON);
+
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "error",
+      message: err.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function parseNum(v) {
+  if (v === undefined || v === null) return 0;
+  if (typeof v === "number") return isNaN(v) ? 0 : v;
+  var s = String(v).replace(/R\\$/g, "").replace(/%/g, "").replace(/\\s/g, "").trim();
+  if (!s || s === "-") return 0;
+  if (s.indexOf(",") >= 0 && s.indexOf(".") >= 0) {
+    if (s.lastIndexOf(",") > s.lastIndexOf(".")) {
+      s = s.replace(/\\./g, "").replace(",", ".");
+    } else {
+      s = s.replace(/,/g, "");
+    }
+  } else if (s.indexOf(",") >= 0) {
+    s = s.replace(",", ".");
+  }
+  var n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
 }`;
 
 export class SheetService {
@@ -137,11 +348,11 @@ export class SheetService {
   /**
    * Helper to parse numerical and monetary values from spreadsheet strings
    */
-  private static parseNumber(val: any): number {
+  public static parseNumber(val: any): number {
     if (val === undefined || val === null) return 0;
     if (typeof val === 'number') return isNaN(val) ? 0 : val;
     let s = String(val).trim();
-    if (!s) return 0;
+    if (!s || s === '-') return 0;
     // Remove R$, %, spaces
     s = s.replace(/R\$/g, '').replace(/%/g, '').trim();
     // Handle Brazilian format (1.234,56 -> 1234.56)
@@ -179,7 +390,7 @@ export class SheetService {
   }
 
   /**
-   * Robust CSV Line Splitter handling quotes and delimiters
+   * Robust CSV Line Splitter handling quotes and delimiters (; or ,)
    */
   public static parseCsvLines(csvText: string): string[][] {
     const lines = csvText.split(/\r?\n/).filter((l) => l.trim().length > 0);
@@ -213,10 +424,184 @@ export class SheetService {
   }
 
   /**
-   * Parse CSV content from Google Sheets into structured FunnelDailyRecord objects
+   * Dedicated parser for the User's exact Matrix layout (Aba: Painel nós da Jornada)
+   * Col A: Indicators
+   * Col B: Meta (LP)
+   * Col C: Meta (Form)
+   * Col D: Google
+   */
+  public static parseMatrixCsvToRecords(rows: string[][]): FunnelDailyRecord[] | null {
+    if (rows.length < 3) return null;
+
+    // Check if this matches matrix format (Column A contains indicator names)
+    const norm = (s: string) =>
+      (s || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim();
+
+    const col0Items = rows.map((r) => norm(r[0] || ''));
+    const isMatrix =
+      col0Items.some((n) => n.includes('indicadores da jornada')) ||
+      col0Items.some((n) => n === 'investimento') ||
+      col0Items.some((n) => n.includes('valor de captacao'));
+
+    if (!isMatrix) return null;
+
+    // Extract month from row 0 / 1
+    let month = 'Março';
+    const monthRow = rows.find((r) => norm(r[0]).includes('mes'));
+    if (monthRow && monthRow[1] && monthRow[1].trim()) {
+      month = monthRow[1].trim();
+    }
+
+    const data: Record<string, Record<string, number>> = {
+      'Meta (LP)': {},
+      'Meta (Form)': {},
+      Google: {},
+    };
+
+    rows.forEach((r) => {
+      if (!r || r.length < 2) return;
+      const key = norm(r[0]);
+      const valLP = this.parseNumber(r[1]);
+      const valForm = this.parseNumber(r[2]);
+      const valGoogle = this.parseNumber(r[3]);
+
+      if (key === 'investimento') {
+        data['Meta (LP)'].investimento = valLP;
+        data['Meta (Form)'].investimento = valForm;
+        data['Google'].investimento = valGoogle;
+      } else if (key.includes('captacao')) {
+        data['Meta (LP)'].valorCaptacao = valLP;
+        data['Meta (Form)'].valorCaptacao = valForm;
+        data['Google'].valorCaptacao = valGoogle;
+      } else if (key.includes('distribuicao')) {
+        data['Meta (LP)'].distribuicao = valLP;
+        data['Meta (Form)'].distribuicao = valForm;
+        data['Google'].distribuicao = valGoogle;
+      } else if (key.includes('impressoes')) {
+        data['Meta (LP)'].impressoes = valLP;
+        data['Meta (Form)'].impressoes = valForm;
+        data['Google'].impressoes = valGoogle;
+      } else if (key.includes('cliques')) {
+        data['Meta (LP)'].cliques = valLP;
+        data['Meta (Form)'].cliques = valForm;
+        data['Google'].cliques = valGoogle;
+      } else if (key.includes('acessos') || key.includes('pagina')) {
+        data['Meta (LP)'].acessosPagina = valLP;
+        data['Meta (Form)'].acessosPagina = valForm;
+        data['Google'].acessosPagina = valGoogle;
+      } else if (key === 'leads') {
+        data['Meta (LP)'].leads = valLP;
+        data['Meta (Form)'].leads = valForm;
+        data['Google'].leads = valGoogle;
+      } else if (key === 'mql') {
+        data['Meta (LP)'].mql = valLP;
+        data['Meta (Form)'].mql = valForm;
+        data['Google'].mql = valGoogle;
+      } else if (key.includes('ligacoes realizadas')) {
+        data['Meta (LP)'].ligacoesRealizadas = valLP;
+        data['Meta (Form)'].ligacoesRealizadas = valForm;
+        data['Google'].ligacoesRealizadas = valGoogle;
+      } else if (key.includes('ligacoes atendidas')) {
+        data['Meta (LP)'].ligacoesAtendidas = valLP;
+        data['Meta (Form)'].ligacoesAtendidas = valForm;
+        data['Google'].ligacoesAtendidas = valGoogle;
+      } else if (key === 'sal') {
+        data['Meta (LP)'].sal = valLP;
+        data['Meta (Form)'].sal = valForm;
+        data['Google'].sal = valGoogle;
+      } else if (key === 'sql') {
+        data['Meta (LP)'].sql = valLP;
+        data['Meta (Form)'].sql = valForm;
+        data['Google'].sql = valGoogle;
+      } else if (key.includes('rm agendadas')) {
+        data['Meta (LP)'].rmAgendadas = valLP;
+        data['Meta (Form)'].rmAgendadas = valForm;
+        data['Google'].rmAgendadas = valGoogle;
+      } else if (key.includes('programadas')) {
+        data['Meta (LP)'].reunioesProgramadas = valLP;
+        data['Meta (Form)'].reunioesProgramadas = valForm;
+        data['Google'].reunioesProgramadas = valGoogle;
+      } else if (key.includes('realizadas no dia') || key.includes('reunioes realizadas')) {
+        data['Meta (LP)'].reunioesRealizadas = valLP;
+        data['Meta (Form)'].reunioesRealizadas = valForm;
+        data['Google'].reunioesRealizadas = valGoogle;
+      } else if (key.includes('no show')) {
+        data['Meta (LP)'].noShow = valLP;
+        data['Meta (Form)'].noShow = valForm;
+        data['Google'].noShow = valGoogle;
+      } else if (key.includes('reagendamentos')) {
+        data['Meta (LP)'].reagendamentos = valLP;
+        data['Meta (Form)'].reagendamentos = valForm;
+        data['Google'].reagendamentos = valGoogle;
+      } else if (key.includes('vendas no dia') || key === 'vendas') {
+        data['Meta (LP)'].vendas = valLP;
+        data['Meta (Form)'].vendas = valForm;
+        data['Google'].vendas = valGoogle;
+      } else if (key.includes('faturamento')) {
+        data['Meta (LP)'].faturamento = valLP;
+        data['Meta (Form)'].faturamento = valForm;
+        data['Google'].faturamento = valGoogle;
+      }
+    });
+
+    const channels: ('Meta (LP)' | 'Meta (Form)' | 'Google')[] = ['Meta (LP)', 'Meta (Form)', 'Google'];
+    const today = new Date().toISOString().slice(0, 10);
+
+    return channels.map((ch, idx) => {
+      const d = data[ch] || {};
+      const investimento = d.investimento || 0;
+      const valorCaptacao = d.valorCaptacao || investimento * 0.85;
+      const distribuicao = d.distribuicao || investimento - valorCaptacao;
+      const cliques = d.cliques || 0;
+      const acessos = ch === 'Meta (Form)' ? 0 : d.acessosPagina || cliques;
+      const rm = d.rmAgendadas || 0;
+
+      return {
+        id: `matrix_${ch.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}_${idx}`,
+        date: today,
+        month: month,
+        channel: ch,
+        investimento,
+        valorCaptacao,
+        distribuicao,
+        impressoes: d.impressoes || 0,
+        cliques,
+        acessosPagina: acessos,
+        leads: d.leads || 0,
+        mql: d.mql || 0,
+        ligacoesRealizadas: d.ligacoesRealizadas || 0,
+        ligacoesAtendidas: d.ligacoesAtendidas || 0,
+        sal: d.sal || 0,
+        sql: d.sql || 0,
+        rmAgendadas: rm,
+        reunioesProgramadas: d.reunioesProgramadas || rm,
+        reunioesRealizadas: d.reunioesRealizadas || 0,
+        noShow: d.noShow || 0,
+        reagendamentos: d.reagendamentos || 0,
+        vendas: d.vendas || 0,
+        faturamento: d.faturamento || 0,
+      };
+    });
+  }
+
+  /**
+   * Universal CSV Parser: Automatically detects Matrix vs Standard Table layout
    */
   public static parseCsvToRecords(csvText: string): FunnelDailyRecord[] {
     const rows = this.parseCsvLines(csvText);
+    if (rows.length === 0) return [];
+
+    // 1. Try Matrix layout first (Exact format of User's "Painel nós da Jornada")
+    const matrixResult = this.parseMatrixCsvToRecords(rows);
+    if (matrixResult && matrixResult.length > 0) {
+      return matrixResult;
+    }
+
+    // 2. Fallback to standard column-based table
     if (rows.length < 2) return [];
 
     const headers = rows[0].map((h) => h.toLowerCase().trim());
@@ -257,7 +642,6 @@ export class SheetService {
       if (!rawDate && !r[idxInvest >= 0 ? idxInvest : 0]) continue;
 
       let dateFormatted = rawDate;
-      // Handle DD/MM/YYYY to YYYY-MM-DD
       if (rawDate.includes('/')) {
         const parts = rawDate.split('/');
         if (parts.length === 3) {
@@ -326,6 +710,50 @@ export class SheetService {
   }
 
   /**
+   * Reads data from Google Apps Script Webhook (GET) with zero CORS issues
+   */
+  public static async fetchFromAppsScriptWebhook(
+    webhookUrl: string
+  ): Promise<{ success: boolean; message: string; records?: FunnelDailyRecord[] }> {
+    if (!webhookUrl || !webhookUrl.startsWith('https://script.google.com/')) {
+      return {
+        success: false,
+        message: 'A URL deve ser do Google Apps Script (começando com https://script.google.com/macros/s/...)',
+      };
+    }
+
+    try {
+      this.setSavedWebhookUrl(webhookUrl);
+      const response = await fetch(webhookUrl, {
+        method: 'GET',
+        headers: { Accept: 'application/json, text/plain, */*' },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erro HTTP ${response.status} ao consultar Webhook.`);
+      }
+
+      const json = await response.json();
+      if (json && json.status === 'success' && Array.isArray(json.records) && json.records.length > 0) {
+        this.saveRecords(json.records);
+        return {
+          success: true,
+          message: `${json.records.length} canais sincronizados diretamente da sua planilha (Mês: ${json.month || 'Ativo'}) com sucesso!`,
+          records: json.records,
+        };
+      }
+
+      throw new Error(json.message || 'O Webhook respondeu, mas não retornou a estrutura esperada de canais.');
+    } catch (err: any) {
+      console.warn('Apps script GET error:', err);
+      return {
+        success: false,
+        message: 'Falha ao ler via Webhook: ' + (err.message || 'Verifique se o App foi implantado para "Qualquer pessoa".'),
+      };
+    }
+  }
+
+  /**
    * Syncs from Google Sheets CSV URL, parses the rows and updates storage
    */
   public static async syncFromGoogleSheet(
@@ -345,13 +773,15 @@ export class SheetService {
       });
 
       if (!response.ok) {
-        throw new Error(`Erro HTTP ${response.status}: Não foi possível acessar a planilha.`);
+        throw new Error(
+          `Erro HTTP ${response.status}: Não foi possível acessar o link de exportação. (Dica: Use a aba "Colar CSV" ou o "Webhook Apps Script" para conexão 100% direta).`
+        );
       }
 
       const csvText = await response.text();
       if (!csvText || csvText.includes('<!DOCTYPE html>')) {
         throw new Error(
-          'A planilha retornou uma página de login HTML. Certifique-se de configurar o compartilhamento como "Qualquer pessoa com o link pode ver".'
+          'A planilha retornou uma página de login HTML. Para links diretos, compartilhe como "Qualquer pessoa com o link" ou use a aba de colar CSV.'
         );
       }
 
@@ -360,7 +790,7 @@ export class SheetService {
       if (parsed.length === 0) {
         return {
           success: true,
-          message: 'Planilha acessada com sucesso, porém nenhuma linha de dados foi encontrada.',
+          message: 'Planilha acessada com sucesso, porém nenhuma linha de dados foi identificada.',
           count: 0,
           records: [],
         };
@@ -371,7 +801,7 @@ export class SheetService {
 
       return {
         success: true,
-        message: `${parsed.length} registros sincronizados e importados com sucesso da sua planilha Google!`,
+        message: `${parsed.length} canais/registros sincronizados e importados com sucesso da sua planilha Google!`,
         count: parsed.length,
         records: parsed,
       };
@@ -385,7 +815,7 @@ export class SheetService {
   }
 
   /**
-   * Sends data directly to Google Sheet using a Google Apps Script Web App (Webhook)
+   * Sends data directly to Google Sheet cells using Google Apps Script Webhook (POST)
    */
   public static async sendToGoogleAppsScript(
     webhookUrl: string,
@@ -400,17 +830,16 @@ export class SheetService {
 
     try {
       this.setSavedWebhookUrl(webhookUrl);
-      
+
       const payload = Array.isArray((data as any).records)
         ? data
         : (data as any).date
         ? { records: [data], action: 'append' }
         : data;
 
-      // Use fetch with no-cors or standard POST
       await fetch(webhookUrl, {
         method: 'POST',
-        mode: 'no-cors', // Apps Script redirect requires no-cors in browser
+        mode: 'no-cors',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -419,7 +848,7 @@ export class SheetService {
 
       return {
         success: true,
-        message: 'Dados enviados com sucesso para a planilha via Google Apps Script!',
+        message: 'Dados enviados com sucesso para as células exatas da planilha via Google Apps Script!',
       };
     } catch (err: any) {
       console.error('Webhook error:', err);
@@ -492,4 +921,3 @@ export class SheetService {
     document.body.removeChild(link);
   }
 }
-

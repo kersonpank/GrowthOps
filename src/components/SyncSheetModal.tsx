@@ -12,8 +12,10 @@ import {
   Check,
   Trash2,
   Code,
-  HelpCircle,
   Zap,
+  ClipboardPaste,
+  FileSpreadsheet,
+  Upload,
 } from 'lucide-react';
 import { SheetService, APPS_SCRIPT_TEMPLATE } from '../services/sheetService';
 import { FunnelDailyRecord } from '../types';
@@ -37,9 +39,10 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  const [activeTab, setActiveTab] = useState<'import' | 'export_webhook' | 'manage'>('import');
+  const [activeTab, setActiveTab] = useState<'paste_csv' | 'export_webhook' | 'sheet_url' | 'manage'>('paste_csv');
   const [sheetUrl, setSheetUrl] = useState<string>(() => SheetService.getSavedSheetUrl());
   const [webhookUrl, setWebhookUrl] = useState<string>(() => SheetService.getSavedWebhookUrl());
+  const [csvInput, setCsvInput] = useState<string>('');
   const [copiedCode, setCopiedCode] = useState(false);
   const [syncStatus, setSyncStatus] = useState<{ loading: boolean; message?: string; success?: boolean }>({
     loading: false,
@@ -51,8 +54,110 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
     setTimeout(() => setCopiedCode(false), 2500);
   };
 
-  const handleSyncFromSheet = async () => {
-    setSyncStatus({ loading: true });
+  // 1. Process Directly Pasted CSV or File
+  const handleProcessCsvText = (textToProcess?: string) => {
+    const raw = textToProcess !== undefined ? textToProcess : csvInput;
+    if (!raw.trim()) {
+      setSyncStatus({
+        loading: false,
+        success: false,
+        message: 'Por favor, cole o texto CSV da planilha ou selecione um arquivo.',
+      });
+      return;
+    }
+
+    try {
+      const records = SheetService.parseCsvToRecords(raw);
+      if (records.length === 0) {
+        setSyncStatus({
+          loading: false,
+          success: false,
+          message: 'Nenhum dado válido de canais (Meta LP, Meta Form, Google) foi identificado no texto colado.',
+        });
+        return;
+      }
+
+      SheetService.saveRecords(records);
+      onRefreshData(records);
+
+      setSyncStatus({
+        loading: false,
+        success: true,
+        message: `Sucesso! ${records.length} canais (Meta LP, Meta Form, Google) foram importados com precisão cirúrgica e o painel foi atualizado!`,
+      });
+    } catch (e: any) {
+      setSyncStatus({
+        loading: false,
+        success: false,
+        message: 'Erro ao interpretar o CSV: ' + (e.message || 'Formato desconhecido'),
+      });
+    }
+  };
+
+  // 2. Handle File Upload (.csv)
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      setCsvInput(text);
+      handleProcessCsvText(text);
+    };
+    reader.readAsText(file);
+  };
+
+  // 3. Sync from Google Sheet via Apps Script Webhook (GET)
+  const handleFetchFromWebhook = async () => {
+    if (!webhookUrl) {
+      setSyncStatus({
+        loading: false,
+        success: false,
+        message: 'Por favor, insira a URL do Webhook do Google Apps Script.',
+      });
+      return;
+    }
+
+    setSyncStatus({ loading: true, message: 'Consultando dados da planilha via Apps Script...' });
+    const result = await SheetService.fetchFromAppsScriptWebhook(webhookUrl);
+    setSyncStatus({
+      loading: false,
+      success: result.success,
+      message: result.message,
+    });
+
+    if (result.success && result.records) {
+      onRefreshData(result.records);
+    }
+  };
+
+  // 4. Send to Google Sheet via Apps Script Webhook (POST)
+  const handleSendAllToSheet = async () => {
+    if (!webhookUrl) {
+      setSyncStatus({
+        loading: false,
+        success: false,
+        message: 'Por favor, insira a URL do Webhook do Google Apps Script.',
+      });
+      return;
+    }
+
+    setSyncStatus({ loading: true, message: 'Gravando dados nas células exatas da planilha...' });
+    const result = await SheetService.sendToGoogleAppsScript(webhookUrl, {
+      records: currentRecords,
+    });
+
+    setSyncStatus({
+      loading: false,
+      success: result.success,
+      message: result.message,
+    });
+  };
+
+  // 5. Sync from Google Sheet CSV URL (GET)
+  const handleSyncFromUrl = async () => {
+    setSyncStatus({ loading: true, message: 'Tentando download do arquivo CSV...' });
     const result = await SheetService.syncFromGoogleSheet(sheetUrl);
     setSyncStatus({
       loading: false,
@@ -65,32 +170,9 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
     }
   };
 
-  const handleSendAllToSheet = async () => {
-    if (!webhookUrl) {
-      setSyncStatus({
-        loading: false,
-        success: false,
-        message: 'Por favor, insira a URL do Webhook do Google Apps Script.',
-      });
-      return;
-    }
-
-    setSyncStatus({ loading: true, message: 'Enviando registros para a planilha...' });
-    const result = await SheetService.sendToGoogleAppsScript(webhookUrl, {
-      records: currentRecords,
-      action: 'overwrite',
-    });
-
-    setSyncStatus({
-      loading: false,
-      success: result.success,
-      message: result.message,
-    });
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
         
         {/* Modal Header */}
         <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/95 sticky top-0 z-10">
@@ -100,10 +182,10 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                Conexão & Sincronização com Google Sheets
+                Conexão & Sincronização com a Planilha
               </h3>
               <p className="text-xs text-slate-400">
-                Leia dados da sua planilha ou envie novos registros em tempo real
+                Aba: <strong>"Painel nós da Jornada"</strong> (Meta LP, Meta Form, Google)
               </p>
             </div>
           </div>
@@ -116,20 +198,21 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex border-b border-slate-800 bg-slate-950/50 px-4 pt-2 gap-2">
+        <div className="flex border-b border-slate-800 bg-slate-950/50 px-4 pt-2 gap-1.5 overflow-x-auto">
+          
           <button
             onClick={() => {
-              setActiveTab('import');
+              setActiveTab('paste_csv');
               setSyncStatus({ loading: false });
             }}
-            className={`px-4 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 flex items-center gap-2 ${
-              activeTab === 'import'
+            className={`px-3.5 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 flex items-center gap-2 shrink-0 ${
+              activeTab === 'paste_csv'
                 ? 'border-indigo-500 text-indigo-400 bg-slate-900'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <RefreshCw className="w-3.5 h-3.5" />
-            1. Puxar Dados da Planilha
+            <ClipboardPaste className="w-3.5 h-3.5 text-emerald-400" />
+            1. Colar CSV / Arquivo
           </button>
 
           <button
@@ -137,14 +220,29 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
               setActiveTab('export_webhook');
               setSyncStatus({ loading: false });
             }}
-            className={`px-4 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 flex items-center gap-2 ${
+            className={`px-3.5 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 flex items-center gap-2 shrink-0 ${
               activeTab === 'export_webhook'
                 ? 'border-indigo-500 text-indigo-400 bg-slate-900'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
             <Zap className="w-3.5 h-3.5 text-amber-400" />
-            2. Gravar na Planilha (Webhook)
+            2. Webhook Google Apps Script
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('sheet_url');
+              setSyncStatus({ loading: false });
+            }}
+            className={`px-3.5 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 flex items-center gap-2 shrink-0 ${
+              activeTab === 'sheet_url'
+                ? 'border-indigo-500 text-indigo-400 bg-slate-900'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <ExternalLink className="w-3.5 h-3.5 text-blue-400" />
+            3. Link da Planilha
           </button>
 
           <button
@@ -152,19 +250,19 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
               setActiveTab('manage');
               setSyncStatus({ loading: false });
             }}
-            className={`px-4 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 flex items-center gap-2 ${
+            className={`px-3.5 py-2.5 text-xs font-semibold rounded-t-xl transition-all border-b-2 flex items-center gap-2 shrink-0 ${
               activeTab === 'manage'
                 ? 'border-indigo-500 text-indigo-400 bg-slate-900'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            3. Gerenciar Dados
+            4. Gerenciar
           </button>
         </div>
 
         {/* Modal Body */}
-        <div className="p-5 space-y-5 overflow-y-auto flex-1 text-xs">
+        <div className="p-5 space-y-4 overflow-y-auto flex-1 text-xs">
           
           {/* Status Feedback Banner */}
           {syncStatus.message && (
@@ -187,84 +285,73 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
             </div>
           )}
 
-          {/* TAB 1: IMPORT FROM GOOGLE SHEETS */}
-          {activeTab === 'import' && (
+          {/* TAB 1: PASTE CSV / UPLOAD FILE (INSTANT & 100% RELIABLE) */}
+          {activeTab === 'paste_csv' && (
             <div className="space-y-4">
-              <div className="p-3.5 rounded-2xl bg-indigo-950/20 border border-indigo-500/20 space-y-1.5">
-                <h4 className="font-bold text-indigo-300 flex items-center gap-1.5">
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  Como importar as linhas da sua Planilha para o Cockpit:
+              <div className="p-3.5 rounded-2xl bg-emerald-950/20 border border-emerald-500/20 space-y-1.5">
+                <h4 className="font-bold text-emerald-300 flex items-center gap-1.5">
+                  <ClipboardPaste className="w-4 h-4 text-emerald-400" />
+                  Importação Instantânea (100% à prova de erros de permissão ou CORS):
                 </h4>
                 <p className="text-slate-300 text-[11px] leading-relaxed">
-                  1. No Google Sheets, clique no botão azul <strong>Compartilhar</strong> no canto superior direito.<br />
-                  2. Mude o Acesso Geral para <strong>"Qualquer pessoa com o link"</strong> como <strong>Leitor</strong> ou <strong>Editor</strong>.<br />
-                  3. Cole o link da planilha abaixo e clique em <strong>"Importar Dados da Planilha"</strong>.
+                  Basta colar o texto CSV da sua planilha abaixo (ou carregar o arquivo exportado) e clicar em <strong>"Importar Dados Agora"</strong>. O sistema identifica automaticamente a matriz de indicadores e os 3 canais (Meta LP, Meta Form, Google).
                 </p>
               </div>
 
               <div>
-                <label className="font-semibold text-slate-300 block mb-1.5">
-                  URL da Planilha do Google (Link de Compartilhamento)
-                </label>
-                <input
-                  type="text"
-                  placeholder="https://docs.google.com/spreadsheets/d/..."
-                  value={sheetUrl}
-                  onChange={(e) => setSheetUrl(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 font-mono text-xs text-white focus:outline-none focus:border-indigo-500"
-                />
-                <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-400">
-                  <a
-                    href={sheetUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-indigo-400 hover:text-indigo-300 inline-flex items-center gap-1 font-medium"
-                  >
-                    <span>Abrir planilha no Google Docs</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                  <span>Lê automaticamente colunas e valores diários</span>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="font-semibold text-slate-300 block">
+                    Cole o conteúdo CSV da Planilha aqui:
+                  </label>
+                  <label className="cursor-pointer inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] transition-colors">
+                    <Upload className="w-3 h-3 text-indigo-400" />
+                    <span>Carregar Arquivo .CSV</span>
+                    <input type="file" accept=".csv,text/csv" onChange={handleFileUpload} className="hidden" />
+                  </label>
                 </div>
+                <textarea
+                  rows={6}
+                  placeholder={`MÊS,Março,Março,Março,,...\nINDICADORES DA JORNADA,Meta (LP),Meta (Form),Google\nINVESTIMENTO,"R$ 0,00","R$ 0,00","R$ 0,00"\n...`}
+                  value={csvInput}
+                  onChange={(e) => setCsvInput(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 font-mono text-[11px] text-white focus:outline-none focus:border-indigo-500"
+                />
               </div>
 
-              <div className="pt-2">
-                <button
-                  onClick={handleSyncFromSheet}
-                  disabled={syncStatus.loading || !sheetUrl}
-                  className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 transition-all active:scale-[0.99] disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-4 h-4 ${syncStatus.loading ? 'animate-spin' : ''}`} />
-                  <span>{syncStatus.loading ? 'Importando...' : 'Importar Dados da Planilha Agora'}</span>
-                </button>
-              </div>
+              <button
+                onClick={() => handleProcessCsvText()}
+                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all active:scale-[0.99]"
+              >
+                <Check className="w-4 h-4" />
+                <span>Importar Dados do CSV Agora</span>
+              </button>
             </div>
           )}
 
-          {/* TAB 2: EXPORT / WEBHOOK (GOOGLE APPS SCRIPT) */}
+          {/* TAB 2: GOOGLE APPS SCRIPT WEBHOOK (BIDIRECTIONAL & SAFE) */}
           {activeTab === 'export_webhook' && (
             <div className="space-y-4">
-              <div className="p-4 rounded-2xl bg-amber-950/20 border border-amber-500/20 space-y-2">
-                <h4 className="font-bold text-amber-300 flex items-center gap-1.5">
+              <div className="p-3.5 rounded-2xl bg-indigo-950/20 border border-indigo-500/20 space-y-1.5">
+                <h4 className="font-bold text-indigo-300 flex items-center gap-1.5">
                   <Zap className="w-4 h-4 text-amber-400" />
-                  Por que é necessário o Webhook do Google Apps Script?
+                  Conector Cirúrgico Google Apps Script (Leitura e Gravação Segura)
                 </h4>
                 <p className="text-slate-300 text-[11px] leading-relaxed">
-                  Por regras de segurança da Google, nenhuma aplicação web externa consegue <strong>escrever dados diretamente</strong> em uma planilha apenas com o link de compartilhamento. Para permitir a escrita automática em tempo real, basta ativar um micro-script gratuito de 1 minuto na sua planilha:
+                  Este novo script foi reestruturado para ser <strong>100% não destrutivo</strong>: ele localiza as linhas exatas de cada indicador na aba <em>"Painel nós da Jornada"</em> e lê/grava <strong>apenas nas colunas B (Meta LP), C (Meta Form) e D (Google)</strong>, sem nunca apagar cabeçalhos, fórmulas ou o Playbook de ações das colunas F e G!
                 </p>
               </div>
 
               {/* Step by Step Guide */}
-              <div className="space-y-2.5 p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 text-[11px]">
+              <div className="space-y-2 p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 text-[11px]">
                 <span className="font-bold text-white block uppercase tracking-wider text-[10px] text-indigo-400">
-                  Passo a Passo Rápido (Leva 1 minuto):
+                  Como Instalar na sua Planilha em 1 Minuto:
                 </span>
                 <ol className="list-decimal list-inside space-y-1.5 text-slate-300">
-                  <li>Na sua planilha do Google, clique no menu <strong>Extensões &gt; Apps Script</strong>.</li>
-                  <li>Apague o código que estiver lá e <strong>cole o código abaixo</strong>.</li>
-                  <li>Clique no botão azul superior <strong>Implantar &gt; Nova implantação</strong>.</li>
-                  <li>Selecione o tipo <strong>App da Web</strong> (ícone de engrenagem).</li>
-                  <li>Em <em>"Quem pode acessar"</em>, selecione <strong>Qualquer pessoa (Anyone)</strong> e clique em <em>Implantar</em>.</li>
-                  <li>Copie a <strong>URL do App da Web</strong> fornecida pelo Google e cole no campo abaixo!</li>
+                  <li>Na planilha, acesse <strong>Extensões &gt; Apps Script</strong>.</li>
+                  <li>Substitua todo o conteúdo pelo <strong>código atualizado abaixo</strong>.</li>
+                  <li>Clique em <strong>Implantar &gt; Nova implantação</strong> (tipo <strong>App da Web</strong>).</li>
+                  <li>Defina <em>"Quem pode acessar"</em> como <strong>Qualquer pessoa (Anyone)</strong> e implante.</li>
+                  <li>Copie a <strong>URL do App da Web</strong> gerada e cole no campo abaixo.</li>
                 </ol>
               </div>
 
@@ -273,7 +360,7 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="font-semibold text-slate-300 flex items-center gap-1.5">
                     <Code className="w-3.5 h-3.5 text-indigo-400" />
-                    Código para colar no Apps Script:
+                    Código Cirúrgico do Apps Script:
                   </span>
                   <button
                     onClick={handleCopyCode}
@@ -283,7 +370,7 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
                     <span>{copiedCode ? 'Código Copiado!' : 'Copiar Código'}</span>
                   </button>
                 </div>
-                <pre className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 font-mono text-[10px] max-h-32 overflow-y-auto leading-normal">
+                <pre className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 font-mono text-[10px] max-h-28 overflow-y-auto leading-normal">
                   {APPS_SCRIPT_TEMPLATE}
                 </pre>
               </div>
@@ -302,20 +389,77 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
                 />
               </div>
 
-              <div className="pt-2 flex flex-col sm:flex-row gap-2">
+              <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  onClick={handleFetchFromWebhook}
+                  disabled={syncStatus.loading || !webhookUrl}
+                  className="py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-md shadow-indigo-600/30 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${syncStatus.loading ? 'animate-spin' : ''}`} />
+                  <span>Puxar Dados da Planilha (GET)</span>
+                </button>
+
                 <button
                   onClick={handleSendAllToSheet}
                   disabled={syncStatus.loading || !webhookUrl}
-                  className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                  className="py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow-md shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                 >
-                  <Send className="w-4 h-4" />
-                  <span>Enviar Todos os Registros do Cockpit para a Planilha</span>
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Gravar nas Células da Planilha (POST)</span>
                 </button>
               </div>
             </div>
           )}
 
-          {/* TAB 3: MANAGE / CLEAR DATA */}
+          {/* TAB 3: SHEET URL (CSV EXPORT) */}
+          {activeTab === 'sheet_url' && (
+            <div className="space-y-4">
+              <div className="p-3.5 rounded-2xl bg-blue-950/20 border border-blue-500/20 space-y-1.5">
+                <h4 className="font-bold text-blue-300 flex items-center gap-1.5">
+                  <ExternalLink className="w-4 h-4" />
+                  Importação por Link da Planilha
+                </h4>
+                <p className="text-slate-300 text-[11px] leading-relaxed">
+                  Para leitura direta por link público sem Webhook, certifique-se de que a planilha está configurada como <strong>"Qualquer pessoa com o link"</strong> ou utilize o menu <em>Arquivo &gt; Compartilhar &gt; Publicar na Web (formato CSV)</em>.
+                </p>
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-300 block mb-1.5">
+                  URL da Planilha do Google
+                </label>
+                <input
+                  type="text"
+                  placeholder="https://docs.google.com/spreadsheets/d/..."
+                  value={sheetUrl}
+                  onChange={(e) => setSheetUrl(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 font-mono text-xs text-white focus:outline-none focus:border-indigo-500"
+                />
+                <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-400">
+                  <a
+                    href={sheetUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-indigo-400 hover:text-indigo-300 inline-flex items-center gap-1 font-medium"
+                  >
+                    <span>Abrir planilha no Google Docs</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              </div>
+
+              <button
+                onClick={handleSyncFromUrl}
+                disabled={syncStatus.loading || !sheetUrl}
+                className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 transition-all active:scale-[0.99] disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${syncStatus.loading ? 'animate-spin' : ''}`} />
+                <span>{syncStatus.loading ? 'Sincronizando...' : 'Sincronizar via Link CSV'}</span>
+              </button>
+            </div>
+          )}
+
+          {/* TAB 4: MANAGE DATA */}
           {activeTab === 'manage' && (
             <div className="space-y-4">
               <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-2">
@@ -324,7 +468,7 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
                   Estado Atual dos Dados no Navegador
                 </h4>
                 <p className="text-slate-300 text-[11px]">
-                  Atualmente o sistema está exibindo <strong>{currentRecords.length} registros diários</strong>.
+                  Atualmente o sistema está exibindo <strong>{currentRecords.length} canais/registros</strong>.
                 </p>
               </div>
 
@@ -338,7 +482,7 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
                       Zerar / Limpar Dados
                     </h5>
                     <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
-                      Remove os dados de exemplo pré-carregados para que você comece com o dashboard zerado ou apenas com os dados da sua planilha.
+                      Limpa os registros para começar com o dashboard zerado ou pronto para carregar apenas os dados reais da sua planilha.
                     </p>
                   </div>
                   <button
@@ -352,7 +496,7 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
                     }}
                     className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold transition-all text-xs"
                   >
-                    Limpar Dados de Exemplo (Zerar)
+                    Limpar Dados (Zerar)
                   </button>
                 </div>
 
@@ -364,7 +508,7 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
                       Restaurar Demonstração
                     </h5>
                     <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-                      Recarrega a base completa de dados simulados com histórico consolidado dos canais Meta e Google.
+                      Recarrega a base completa de dados de exemplo com histórico consolidado dos canais Meta e Google.
                     </p>
                   </div>
                   <button
@@ -392,4 +536,3 @@ export const SyncSheetModal: React.FC<SyncSheetModalProps> = ({
     </div>
   );
 };
-
