@@ -1,0 +1,6 @@
+{
+  "name": "GrowthOps Analytics - Cockpit de Funil & Performance",
+  "description": "Plataforma de inteligência e análise de funil de marketing e vendas baseada em planilha de jornada, com KPIs em tempo real, visualização de conversão por etapa, diagnóstico de gargalos e simulador de metas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
